@@ -6,8 +6,8 @@ import os
 from supabase import create_client, Client
 from datetime import datetime, timedelta
 import jwt
-from passlib.context import CryptContext
 from jwt import PyJWTError
+from passlib.context import CryptContext
 
 app = FastAPI(title="Pricezapp API")
 
@@ -75,7 +75,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
-async def get_current_user(token: str = ""):
+async def get_current_user(token: str = Depends(lambda: "")):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -167,14 +167,10 @@ async def login(user: UserLogin):
 
 # Endpoints de favoritos
 @app.post("/favorites/")
-async def add_favorite(favorite: FavoriteCreate):
+async def add_favorite(favorite: FavoriteCreate, user_id: int = Depends(get_current_user)):
     try:
-        # Obtener token del header
-        token = None
-        # Aquí deberías extraer el token de los headers
-        # Por simplicidad, asumimos que el user_id viene en el body por ahora
         favorite_data = {
-            "user_id": 1,  # Temporal - debes implementar la autenticación
+            "user_id": user_id,
             "product_id": favorite.product_id,
             "product_data": favorite.product_data
         }
@@ -185,27 +181,27 @@ async def add_favorite(favorite: FavoriteCreate):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/favorites/")
-async def get_favorites():
+async def get_favorites(user_id: int = Depends(get_current_user)):
     try:
-        favorites = supabase.table("favorites").select("*").eq("user_id", 1).execute()
+        favorites = supabase.table("favorites").select("*").eq("user_id", user_id).execute()
         return favorites.data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/favorites/{product_id}")
-async def remove_favorite(product_id: int):
+async def remove_favorite(product_id: int, user_id: int = Depends(get_current_user)):
     try:
-        supabase.table("favorites").delete().eq("user_id", 1).eq("product_id", product_id).execute()
+        supabase.table("favorites").delete().eq("user_id", user_id).eq("product_id", product_id).execute()
         return {"message": "Favorite removed"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 # Endpoints de listas de compras
 @app.post("/shopping-lists/")
-async def create_shopping_list(list_data: ShoppingListCreate):
+async def create_shopping_list(list_data: ShoppingListCreate, user_id: int = Depends(get_current_user)):
     try:
         list_obj = {
-            "user_id": 1,
+            "user_id": user_id,
             "name": list_data.name
         }
         
@@ -215,19 +211,39 @@ async def create_shopping_list(list_data: ShoppingListCreate):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/shopping-lists/")
-async def get_shopping_lists():
+async def get_shopping_lists(user_id: int = Depends(get_current_user)):
     try:
-        lists = supabase.table("shopping_lists").select("*").eq("user_id", 1).execute()
+        lists = supabase.table("shopping_lists").select("*, shopping_list_items(*)").eq("user_id", user_id).execute()
         return lists.data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/shopping-lists/{list_id}/items")
+async def add_to_shopping_list(list_id: int, item: ShoppingListItemCreate, user_id: int = Depends(get_current_user)):
+    try:
+        # Verificar que la lista pertenece al usuario
+        list_data = supabase.table("shopping_lists").select("*").eq("id", list_id).eq("user_id", user_id).execute()
+        if not list_data.data:
+            raise HTTPException(status_code=404, detail="List not found")
+        
+        item_data = {
+            "list_id": list_id,
+            "product_id": item.product_id,
+            "product_data": item.product_data,
+            "quantity": item.quantity
+        }
+        
+        result = supabase.table("shopping_list_items").insert(item_data).execute()
+        return {"message": "Item added to list", "item_id": result.data[0]["id"]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 # Endpoints de alertas de precio
 @app.post("/price-alerts/")
-async def create_price_alert(alert: PriceAlertCreate):
+async def create_price_alert(alert: PriceAlertCreate, user_id: int = Depends(get_current_user)):
     try:
         alert_data = {
-            "user_id": 1,
+            "user_id": user_id,
             "product_id": alert.product_id,
             "target_price": alert.target_price
         }
@@ -238,9 +254,9 @@ async def create_price_alert(alert: PriceAlertCreate):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/price-alerts/")
-async def get_price_alerts():
+async def get_price_alerts(user_id: int = Depends(get_current_user)):
     try:
-        alerts = supabase.table("price_alerts").select("*").eq("user_id", 1).execute()
+        alerts = supabase.table("price_alerts").select("*").eq("user_id", user_id).execute()
         return alerts.data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
