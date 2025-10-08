@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import FastAPI, HTTPException, Depends, status, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Any
@@ -21,13 +21,18 @@ app.add_middleware(
 )
 
 # Configuración
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-SECRET_KEY = os.getenv("SECRET_KEY", "pricezapp-secret-key-2024")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "https://mkqrkjjalxvyibpqjrtt.supabase.co")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1rcXJramphbHh2eWlicHFqcnR0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk5MzI4MTMsImV4cCI6MjA3NTUwODgxM30.PxHR2fUQkz_2JHuYH4nZ1qzKEUVTSs9PMTxZIxjbayo")
+SECRET_KEY = os.getenv("SECRET_KEY", "pricezapp-super-secret-key-2024-ultra-segura")
 ALGORITHM = "HS256"
 
 # Inicializar Supabase
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+try:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    print("✅ Conexión a Supabase exitosa")
+except Exception as e:
+    print(f"❌ Error conectando a Supabase: {e}")
+    supabase = None
 
 # Configuración de passwords
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -50,6 +55,7 @@ class ShoppingListCreate(BaseModel):
     name: str
 
 class ShoppingListItemCreate(BaseModel):
+    list_id: int
     product_id: int
     product_data: dict
     quantity: int = 1
@@ -75,27 +81,35 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
-async def get_current_user(token: str = Depends(lambda: "")):
+async def get_current_user(authorization: str = Header(None)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    
+    if not authorization:
+        raise credentials_exception
+    
     try:
-        if not token:
+        # Extraer el token del header "Bearer {token}"
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
             raise credentials_exception
             
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: int = payload.get("user_id")
         if user_id is None:
             raise credentials_exception
-    except PyJWTError:
+            
+    except (ValueError, PyJWTError):
         raise credentials_exception
     
-    # Verificar que el usuario existe
-    user_data = supabase.table("users").select("*").eq("id", user_id).execute()
-    if not user_data.data:
-        raise credentials_exception
+    # Verificar que el usuario existe en Supabase
+    if supabase:
+        user_data = supabase.table("users").select("*").eq("id", user_id).execute()
+        if not user_data.data:
+            raise credentials_exception
     
     return user_id
 
@@ -103,6 +117,9 @@ async def get_current_user(token: str = Depends(lambda: "")):
 @app.post("/auth/register")
 async def register(user: UserRegister):
     try:
+        if not supabase:
+            raise HTTPException(status_code=500, detail="Database connection error")
+            
         # Verificar si el usuario ya existe
         existing_user = supabase.table("users").select("*").eq("email", user.email).execute()
         if existing_user.data:
@@ -113,7 +130,8 @@ async def register(user: UserRegister):
         new_user = supabase.table("users").insert({
             "email": user.email,
             "password_hash": hashed_password,
-            "name": user.name
+            "name": user.name,
+            "created_at": datetime.utcnow().isoformat()
         }).execute()
         
         if not new_user.data:
@@ -138,6 +156,9 @@ async def register(user: UserRegister):
 @app.post("/auth/login")
 async def login(user: UserLogin):
     try:
+        if not supabase:
+            raise HTTPException(status_code=500, detail="Database connection error")
+            
         # Buscar usuario
         user_data = supabase.table("users").select("*").eq("email", user.email).execute()
         if not user_data.data:
@@ -169,10 +190,14 @@ async def login(user: UserLogin):
 @app.post("/favorites/")
 async def add_favorite(favorite: FavoriteCreate, user_id: int = Depends(get_current_user)):
     try:
+        if not supabase:
+            raise HTTPException(status_code=500, detail="Database connection error")
+            
         favorite_data = {
             "user_id": user_id,
             "product_id": favorite.product_id,
-            "product_data": favorite.product_data
+            "product_data": favorite.product_data,
+            "created_at": datetime.utcnow().isoformat()
         }
         
         result = supabase.table("favorites").insert(favorite_data).execute()
@@ -183,6 +208,9 @@ async def add_favorite(favorite: FavoriteCreate, user_id: int = Depends(get_curr
 @app.get("/favorites/")
 async def get_favorites(user_id: int = Depends(get_current_user)):
     try:
+        if not supabase:
+            raise HTTPException(status_code=500, detail="Database connection error")
+            
         favorites = supabase.table("favorites").select("*").eq("user_id", user_id).execute()
         return favorites.data
     except Exception as e:
@@ -191,6 +219,9 @@ async def get_favorites(user_id: int = Depends(get_current_user)):
 @app.delete("/favorites/{product_id}")
 async def remove_favorite(product_id: int, user_id: int = Depends(get_current_user)):
     try:
+        if not supabase:
+            raise HTTPException(status_code=500, detail="Database connection error")
+            
         supabase.table("favorites").delete().eq("user_id", user_id).eq("product_id", product_id).execute()
         return {"message": "Favorite removed"}
     except Exception as e:
@@ -200,9 +231,13 @@ async def remove_favorite(product_id: int, user_id: int = Depends(get_current_us
 @app.post("/shopping-lists/")
 async def create_shopping_list(list_data: ShoppingListCreate, user_id: int = Depends(get_current_user)):
     try:
+        if not supabase:
+            raise HTTPException(status_code=500, detail="Database connection error")
+            
         list_obj = {
             "user_id": user_id,
-            "name": list_data.name
+            "name": list_data.name,
+            "created_at": datetime.utcnow().isoformat()
         }
         
         result = supabase.table("shopping_lists").insert(list_obj).execute()
@@ -213,24 +248,31 @@ async def create_shopping_list(list_data: ShoppingListCreate, user_id: int = Dep
 @app.get("/shopping-lists/")
 async def get_shopping_lists(user_id: int = Depends(get_current_user)):
     try:
-        lists = supabase.table("shopping_lists").select("*, shopping_list_items(*)").eq("user_id", user_id).execute()
+        if not supabase:
+            raise HTTPException(status_code=500, detail="Database connection error")
+            
+        lists = supabase.table("shopping_lists").select("*").eq("user_id", user_id).execute()
         return lists.data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/shopping-lists/{list_id}/items")
-async def add_to_shopping_list(list_id: int, item: ShoppingListItemCreate, user_id: int = Depends(get_current_user)):
+@app.post("/shopping-lists/items")
+async def add_to_shopping_list(item: ShoppingListItemCreate, user_id: int = Depends(get_current_user)):
     try:
+        if not supabase:
+            raise HTTPException(status_code=500, detail="Database connection error")
+            
         # Verificar que la lista pertenece al usuario
-        list_data = supabase.table("shopping_lists").select("*").eq("id", list_id).eq("user_id", user_id).execute()
+        list_data = supabase.table("shopping_lists").select("*").eq("id", item.list_id).eq("user_id", user_id).execute()
         if not list_data.data:
             raise HTTPException(status_code=404, detail="List not found")
         
         item_data = {
-            "list_id": list_id,
+            "list_id": item.list_id,
             "product_id": item.product_id,
             "product_data": item.product_data,
-            "quantity": item.quantity
+            "quantity": item.quantity,
+            "added_at": datetime.utcnow().isoformat()
         }
         
         result = supabase.table("shopping_list_items").insert(item_data).execute()
@@ -242,10 +284,14 @@ async def add_to_shopping_list(list_id: int, item: ShoppingListItemCreate, user_
 @app.post("/price-alerts/")
 async def create_price_alert(alert: PriceAlertCreate, user_id: int = Depends(get_current_user)):
     try:
+        if not supabase:
+            raise HTTPException(status_code=500, detail="Database connection error")
+            
         alert_data = {
             "user_id": user_id,
             "product_id": alert.product_id,
-            "target_price": alert.target_price
+            "target_price": alert.target_price,
+            "created_at": datetime.utcnow().isoformat()
         }
         
         result = supabase.table("price_alerts").insert(alert_data).execute()
@@ -256,6 +302,9 @@ async def create_price_alert(alert: PriceAlertCreate, user_id: int = Depends(get
 @app.get("/price-alerts/")
 async def get_price_alerts(user_id: int = Depends(get_current_user)):
     try:
+        if not supabase:
+            raise HTTPException(status_code=500, detail="Database connection error")
+            
         alerts = supabase.table("price_alerts").select("*").eq("user_id", user_id).execute()
         return alerts.data
     except Exception as e:
@@ -264,11 +313,28 @@ async def get_price_alerts(user_id: int = Depends(get_current_user)):
 # Health check
 @app.get("/")
 async def root():
-    return {"message": "Pricezapp API is running!"}
+    return {"message": "Pricezapp API is running!", "timestamp": datetime.utcnow().isoformat()}
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+    db_status = "connected" if supabase else "disconnected"
+    return {
+        "status": "healthy", 
+        "database": db_status,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+@app.get("/test-supabase")
+async def test_supabase():
+    try:
+        if supabase:
+            # Intentar una consulta simple
+            result = supabase.table("users").select("count", count="exact").execute()
+            return {"message": "Supabase connection successful", "count": result.count}
+        else:
+            return {"message": "Supabase not initialized"}
+    except Exception as e:
+        return {"message": f"Supabase error: {str(e)}"}
 
 if __name__ == "__main__":
     import uvicorn
