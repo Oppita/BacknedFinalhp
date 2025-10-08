@@ -14,7 +14,10 @@ app = FastAPI(title="Pricezapp API")
 # CORS para permitir tu frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://tu-frontend.onrender.com",  # Tu futuro dominio
+        "http://localhost:8000",  # Para desarrollo local
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
