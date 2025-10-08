@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: pricezapp-backend
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: SUPABASE_URL
+        value: https://mkqrkjjalxvyibpqjrtt.supabase.co
+      - key: SUPABASE_KEY
+        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1rcXJramphbHh2eWlicHFqcnR0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk5MzI4MTMsImV4cCI6MjA3NTUwODgxM30.PxHR2fUQkz_2JHuYH4nZ1qzKEUVTSs9PMTxZIxjbayo
+      - key: SECRET_KEY
+        value: pricezapp-super-secret-key-2024-ultra-segura
